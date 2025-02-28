@@ -1,3 +1,3 @@
 # automl-fraud-detection
-# WELCOMEE
+# WELCOMEEE
 Capstone project for Data Science course
