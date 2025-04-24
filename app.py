@@ -31,8 +31,10 @@ from rag_service import RAGSystem
 
 from restaurant_agent import search_restaurants as restaurant_search
 from itinerary_agent import plan_itinerary as itinerary_planner
+from itinerary_agent import fetch_pois, make_poi_df
 from weather_agent import plan_weather_advice
 from budget_agent import allocate_budget
+import pydeck as pdk
 
 
 # ——————————————————————————————
@@ -334,7 +336,58 @@ def plan_itinerary(itinerary_agent, destination, date_range, activities):
         )
 
         logger.info("Successfully generated itinerary")
-        return itinerary_results
+
+        features = fetch_pois(destination, activities)
+        poi_df = make_poi_df(features)
+
+        if not poi_df.empty:
+            st.subheader("📍 Map of Suggested Activities")
+
+            # 1) Assign a uniform beige fill color (R=245, G=245, B=220, A=180)
+            poi_df["color"] = [[245, 50, 220, 180]] * len(poi_df)
+
+            # 2) Center view
+            mid_lat = poi_df.lat.mean()
+            mid_lon = poi_df.lon.mean()
+            view = pdk.ViewState(latitude=mid_lat, longitude=mid_lon, zoom=12)
+
+            # 3) Scatter layer with beige markers
+            scatter = pdk.Layer(
+                "ScatterplotLayer",
+                data=poi_df,
+                get_position="[lon, lat]",
+                get_fill_color="color",
+                get_radius=120,  # adjust size as needed
+                pickable=True,
+                opacity=1,
+            )
+
+            # 4) Text layer with solid black labels
+            text = pdk.Layer(
+                "TextLayer",
+                data=poi_df,
+                pickable=False,
+                get_position="[lon, lat]",
+                get_text="name",
+                get_size=14,
+                get_color=[0, 0, 0, 255],  # black
+                get_alignment_baseline="'bottom'",
+            )
+
+            # 5) Tooltip on hover
+            view = pdk.ViewState(latitude=mid_lat, longitude=mid_lon, zoom=12)
+
+            deck = pdk.Deck(
+                layers=[scatter, text],
+                initial_view_state=view,
+                tooltip={"text": "{name}"},
+                map_style="https://basemaps.cartocdn.com/gl/positron-gl-style/style.json",
+            )
+
+            st.pydeck_chart(deck)
+
+            return itinerary_results
+
     except Exception as e:
         logger.error(f"Error planning itinerary: {str(e)}")
         st.error(f"Error planning itinerary: {str(e)}")
@@ -391,6 +444,9 @@ def build_sidebar():
             - ✈️ Flights from your origin to destination
             - 🏨 Hotels at your destination
             - 💰 Combined options within your budget
+            - 👩🏻‍🍳 Restaurant options based on preferences
+            - 🌁 Itinerary plan for every day of your journey
+            - 💸 Budget allocation
             
             Everything is powered by AI and live data!
             """
@@ -775,7 +831,7 @@ def display_combined_results(combinations, stats):
         st.info("🔍 Budget Analysis")
         st.write(f"• Minimum flight price: ${stats.get('min_flight_price', 0):.2f}")
         st.write(
-            f"• Minimum hotel price: ${stats.get('min_hotel_price', 0):.2f}  per  night (${stats.get('min_hotel_total', 0):.2f} total for {nights} nights)"
+            f"• Minimum hotel price: ${stats.get('min_hotel_price', 0):.2f} per night (${stats.get('min_hotel_total', 0):.2f} total for {nights} nights)"
         )
         st.write(f"• Minimum total price: ${stats.get('min_total_price', 0):.2f}")
         st.write(
@@ -1105,35 +1161,52 @@ def main():
 
         with results_tabs[6]:
             if st.session_state.budget_allocation:
-                st.markdown(st.session_state.budget_allocation)
+                # st.markdown(st.session_state.budget_allocation)
 
                 # Add budget adjustment controls
                 st.subheader("Adjust Budget Allocation")
 
                 col1, col2 = st.columns(2)
                 with col1:
-                    flight_percent = st.slider(
-                        "✈️ Flight Budget %",
-                        min_value=10,
-                        max_value=60,
-                        value=int(clients["budget_manager"].flight_percent * 100),
-                        step=5,
+                    flight_percent = (
+                        st.slider(
+                            "✈️ Flight Budget %",
+                            min_value=10,
+                            max_value=60,
+                            value=int(clients["budget_manager"].flight_percent * 100),
+                            step=5,
+                        )
+                        / 100.0
                     )
 
                 with col2:
-                    hotel_percent = st.slider(
-                        "🏨 Hotel Budget %",
-                        min_value=10,
-                        max_value=60,
-                        value=int(clients["budget_manager"].hotel_percent * 100),
-                        step=5,
+                    hotel_percent = (
+                        st.slider(
+                            "🏨 Hotel Budget %",
+                            min_value=10,
+                            max_value=60,
+                            value=int(clients["budget_manager"].hotel_percent * 100),
+                            step=5,
+                        )
+                        / 100.0
                     )
+
+                    # Step 2: compute the rest of the categories automatically
+                min_bud, max_bud = inputs["budget"]  # your original slider values
+                allocation_text = allocate_budget(
+                    min_bud, max_bud, flight_percent, hotel_percent
+                )
+
+                # Step 3: show it in one nice info‐box
+                st.info(allocation_text, icon="💸")
 
                 if st.button("Update Budget Allocation"):
                     # Update budget manager
                     clients["budget_manager"].update_budget_allocation(
-                        flight_percent=flight_percent / 100,
-                        hotel_percent=hotel_percent / 100,
+                        # flight_percent=flight_percent / 100,
+                        # hotel_percent=hotel_percent / 100,
+                        flight_percent,
+                        hotel_percent,
                     )
 
                     # Update combinations with new allocation
@@ -1155,7 +1228,7 @@ def main():
                         st.success(
                             "Budget allocation updated! Check the Combined Options tab."
                         )
-                        st.experimental_rerun()
+                    # st.experimental_rerun()
             else:
                 st.warning("No budget allocation available.")
 
