@@ -738,7 +738,7 @@ def display_flight_results(flights):
 
 
 def display_hotel_results(hotels):
-    """Display hotel search results"""
+    """Display hotel search results with improved handling"""
     if not hotels:
         st.warning("No hotels found matching your criteria.")
         return
@@ -747,14 +747,22 @@ def display_hotel_results(hotels):
 
     # Create a list of hotel cards
     for i, hotel in enumerate(hotels):
-        with st.expander(f"Hotel {i+1}: {hotel.get('name', 'Unknown Hotel')}"):
+        # Clean up hotel name - remove any amenities text accidentally included
+        hotel_name = hotel.get("name", "Unknown Hotel")
+        if "," in hotel_name and len(hotel_name.split(",")) > 1:
+            hotel_name = hotel_name.split(",")[0].strip()
+
+        # Create expander with clean hotel name
+        with st.expander(f"Hotel {i+1}: {hotel_name}"):
             # Create two columns for hotel info
             col1, col2 = st.columns([2, 1])
 
             with col1:
-                st.write(
-                    f"**Description:** {hotel.get('description', 'No description available.')[:300]}..."
-                )
+                # Show hotel description, truncated if too long
+                description = hotel.get("description", "No description available.")
+                if description and len(description) > 300:
+                    description = description[:300] + "..."
+                st.write(f"**Description:** {description}")
 
                 # Location info
                 location = hotel.get("location", {})
@@ -767,13 +775,44 @@ def display_hotel_results(hotels):
                 if loc_parts:
                     st.write(f"**Location:** {', '.join(loc_parts)}")
 
-                # Amenities
+                # Amenities with better handling
                 amenities = hotel.get("amenities", [])
-                if amenities:
-                    amenities_str = ", ".join(amenities[:10])
-                    if len(amenities) > 10:
-                        amenities_str += f" and {len(amenities) - 10} more"
+
+                # If amenities is somehow a string, convert to list
+                if isinstance(amenities, str):
+                    if "," in amenities:
+                        amenities = [a.strip() for a in amenities.split(",")]
+                    else:
+                        amenities = [amenities.strip()]
+
+                # Ensure we have a list
+                if not isinstance(amenities, list):
+                    amenities = []
+
+                # Clean amenities - less strict filtering
+                clean_amenities = []
+                for amenity in amenities:
+                    if isinstance(amenity, str):
+                        # Keep amenity strings but limit length to avoid display issues
+                        # Using 100 chars instead of 50 to be more lenient
+                        clean_amenity = amenity.strip()
+                        if len(clean_amenity) <= 100:
+                            clean_amenities.append(clean_amenity)
+                        else:
+                            # For long strings, truncate rather than omit
+                            clean_amenities.append(clean_amenity[:97] + "...")
+                    elif isinstance(amenity, dict) and "name" in amenity:
+                        # Handle case where amenity might be an object with name
+                        clean_amenities.append(amenity["name"])
+
+                # Display amenities (or message if none)
+                if clean_amenities:
+                    amenities_str = ", ".join(clean_amenities[:10])
+                    if len(clean_amenities) > 10:
+                        amenities_str += f" and {len(clean_amenities) - 10} more"
                     st.write(f"**Amenities:** {amenities_str}")
+                else:
+                    st.write("**Amenities:** Information not available")
 
             with col2:
                 # Price
@@ -781,15 +820,25 @@ def display_hotel_results(hotels):
                 if price and price.get("total"):
                     currency = price.get("currency", "USD")
                     st.write(f"**Price:** {price.get('total')} {currency} per night")
+                else:
+                    st.write("**Price:** Information not available")
 
                 # Rating
                 rating = hotel.get("rating")
                 if rating:
                     st.write(f"**Rating:** {rating}/5")
+                else:
+                    st.write("**Rating:** Not rated")
 
                 # Source
                 source = hotel.get("source", "Unknown")
                 st.write(f"**Source:** {source}")
+
+                # Add sentiment category for RAG results
+                if source == "RAG":
+                    sentiment = hotel.get("description_sentiment_category", "")
+                    if sentiment:
+                        st.write(f"**Quality:** {sentiment}")
 
                 # ID (useful for debugging)
                 st.write(f"**ID:** {hotel.get('id', 'Unknown')}")
@@ -804,18 +853,26 @@ def display_hotel_results(hotels):
 
     if hotels_with_coords:
         st.subheader("Hotel Locations")
-        df = pd.DataFrame(
-            [
-                {
-                    "name": hotel.get("name", "Unknown"),
-                    "lat": float(hotel.get("location", {}).get("latitude")),
-                    "lon": float(hotel.get("location", {}).get("longitude")),
-                    "price": hotel.get("price", {}).get("total", "N/A"),
-                }
-                for hotel in hotels_with_coords
-            ]
-        )
-        st.map(df)
+        try:
+            df = pd.DataFrame(
+                [
+                    {
+                        "name": hotel.get("name", "Unknown").split(",")[
+                            0
+                        ],  # Clean name for map
+                        "lat": float(hotel.get("location", {}).get("latitude")),
+                        "lon": float(hotel.get("location", {}).get("longitude")),
+                        "price": hotel.get("price", {}).get("total", "N/A"),
+                    }
+                    for hotel in hotels_with_coords
+                ]
+            )
+            st.map(df)
+        except Exception as e:
+            st.error(f"Error displaying map: {str(e)}")
+            st.info(
+                "💡 Tip: Some hotel coordinates may be invalid. Try searching for different hotels."
+            )
 
 
 def display_combined_results(combinations, stats):

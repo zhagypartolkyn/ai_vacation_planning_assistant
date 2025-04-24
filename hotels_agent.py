@@ -29,8 +29,25 @@ class HotelInfo:
     description_sentiment_category: str = ""  # Added this field
 
     def __post_init__(self):
+        """Initialize default values and ensure proper types"""
         if self.amenities is None:
             self.amenities = []
+
+        # Ensure amenities is always a list
+        if not isinstance(self.amenities, list):
+            if isinstance(self.amenities, str):
+                # Convert string to list
+                self.amenities = [
+                    a.strip() for a in self.amenities.split(",") if a.strip()
+                ]
+            else:
+                # Handle other types by creating an empty list
+                self.amenities = []
+
+        # Ensure all amenities are strings
+        self.amenities = [str(a) for a in self.amenities if a]
+
+        # Initialize other dicts if None
         if self.price is None:
             self.price = {}
         if self.location is None:
@@ -38,11 +55,14 @@ class HotelInfo:
 
     def to_dict(self) -> Dict[str, Any]:
         """Convert hotel info to dictionary"""
+        # Ensure amenities is a valid list before returning
+        amenities_list = self.amenities if isinstance(self.amenities, list) else []
+
         return {
             "id": self.id,
             "name": self.name,
             "description": self.description,
-            "amenities": self.amenities,
+            "amenities": list(amenities_list),  # Force to list type
             "rating": self.rating,
             "price": self.price,
             "location": self.location,
@@ -274,7 +294,11 @@ class HotelAgent:
         filtered_hotels = []
 
         for hotel in hotels:
-            hotel_amenities = hotel.amenities
+            # Ensure hotel.amenities is a list
+            hotel_amenities = hotel.amenities if hotel.amenities is not None else []
+
+            # Log for debugging
+            logger.info(f"Hotel {hotel.name} amenities: {hotel_amenities}")
 
             # Convert to lowercase for case-insensitive comparison
             hotel_amenities_lower = [a.lower() for a in hotel_amenities]
@@ -404,19 +428,37 @@ class HotelAgent:
             )
 
             if rag_results:
+                # Debug logging to show RAG document content
+                for i, doc in enumerate(rag_results[:2]):
+                    logger.info(
+                        f"RAG document {i+1} content sample: {doc.page_content[:100]}..."
+                    )
+                    logger.info(f"RAG document {i+1} metadata: {doc.metadata}")
+
                 # Use the improved method that adds price information
                 rag_hotels = self.rag_system.rag_results_to_hotel_info(
                     rag_results, HotelInfo
                 )
                 logger.info(f"Found {len(rag_hotels)} hotels from RAG")
 
+                # Debug log for checking amenities
+                for i, hotel in enumerate(rag_hotels[:2]):
+                    logger.info(f"Hotel {i+1} from RAG: {hotel.name}")
+                    logger.info(f"Amenities: {hotel.amenities}")
+                    logger.info(f"Amenities type: {type(hotel.amenities)}")
+                    logger.info(
+                        f"Amenities is list? {isinstance(hotel.amenities, list)}"
+                    )
+
                 # Filter by amenities
                 rag_hotels = self.filter_hotels_by_amenities(
                     rag_hotels, required_amenities
                 )
+                logger.info(f"After amenities filter: {len(rag_hotels)} hotels remain")
 
                 # Filter by budget (now we can since we've added pricing)
                 rag_hotels = self.filter_hotels_by_budget(rag_hotels, budget_value)
+                logger.info(f"After budget filter: {len(rag_hotels)} hotels remain")
 
                 all_hotels.extend(rag_hotels)
 
@@ -456,6 +498,11 @@ class HotelAgent:
                         hotel_list, offers
                     )
 
+                    # Debug log for amenities in API hotels
+                    for i, hotel in enumerate(api_hotels[:2]):
+                        logger.info(f"API Hotel {i+1}: {hotel.name}")
+                        logger.info(f"API Amenities: {hotel.amenities}")
+
                     # Filter by amenities and budget
                     api_hotels = self.filter_hotels_by_amenities(
                         api_hotels, required_amenities
@@ -468,7 +515,18 @@ class HotelAgent:
         unique_hotels = {}
         for hotel in all_hotels:
             if hotel.id not in unique_hotels:
+                # Ensure amenities is a list
+                if hotel.amenities is None:
+                    hotel.amenities = []
                 unique_hotels[hotel.id] = hotel
+
+        # Double-check all hotels have amenities as list before returning
+        for hotel_id, hotel in unique_hotels.items():
+            if not isinstance(hotel.amenities, list):
+                logger.warning(
+                    f"Hotel {hotel.name} has non-list amenities: {hotel.amenities}"
+                )
+                hotel.amenities = list(hotel.amenities) if hotel.amenities else []
 
         # Sort and limit results
         sorted_hotels = list(unique_hotels.values())
@@ -476,6 +534,7 @@ class HotelAgent:
             key=lambda h: getattr(h, "amenity_match_ratio", 0), reverse=True
         )
 
+        logger.info(f"Returning {min(len(sorted_hotels), max_results)} hotels")
         # Return limited number of results
         return sorted_hotels[:max_results]
 
@@ -519,6 +578,12 @@ class HotelAgent:
 
             # Format results
             hotel_results = [hotel.to_dict() for hotel in hotels]
+
+            # Debug log for checking amenities in final results
+            for i, hotel_dict in enumerate(hotel_results[:2]):
+                logger.info(f"Final result {i+1}: {hotel_dict['name']}")
+                logger.info(f"Final amenities: {hotel_dict['amenities']}")
+                logger.info(f"Final amenities type: {type(hotel_dict['amenities'])}")
 
             # Parse dates for response
             check_in_date, check_out_date = self.parse_date_range(date_range)
