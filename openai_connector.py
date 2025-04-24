@@ -4,9 +4,8 @@ Provides AI-powered lookups for travel codes when traditional methods fail.
 """
 
 import os
-import openai
-from typing import Optional
 import logging
+from typing import Optional
 
 # Configure logging
 logging.basicConfig(level=logging.INFO)
@@ -19,10 +18,26 @@ class OpenAIConnector:
     def __init__(self, api_key=None):
         """Initialize with API key"""
         self.api_key = api_key or os.getenv("OPENAI_API_KEY")
-        if self.api_key:
-            openai.api_key = self.api_key
-        else:
+        self.client = None
+
+        if not self.api_key:
             logger.warning("No OpenAI API key provided. AI fallbacks will not work.")
+        else:
+            logger.info("OpenAI API key available")
+
+            # Import here to avoid import errors if openai is not installed
+            try:
+                import openai
+
+                # Set up the client with API key
+                self.client = openai.OpenAI(api_key=self.api_key)
+                logger.info("OpenAI client initialized successfully")
+            except ImportError:
+                logger.error(
+                    "OpenAI package not installed. Please install with 'pip install openai'"
+                )
+            except Exception as e:
+                logger.error(f"Error initializing OpenAI client: {str(e)}")
 
     def get_airport_code(self, city_name: str) -> Optional[str]:
         """
@@ -34,8 +49,10 @@ class OpenAIConnector:
         Returns:
             3-letter IATA code if found, None otherwise
         """
-        if not self.api_key:
-            logger.warning("OpenAI API key not set, cannot get airport code")
+        if not self.api_key or not self.client:
+            logger.warning(
+                "OpenAI API key not set or client not initialized, cannot get airport code"
+            )
             return None
 
         try:
@@ -55,7 +72,7 @@ class OpenAIConnector:
             Only respond with the 3-letter code and nothing else.
             """
 
-            response = openai.ChatCompletion.create(
+            response = self.client.chat.completions.create(
                 model="gpt-3.5-turbo",
                 messages=[
                     {
@@ -109,8 +126,10 @@ class OpenAIConnector:
         Returns:
             City name if found, None otherwise
         """
-        if not self.api_key:
-            logger.warning("OpenAI API key not set, cannot get city name")
+        if not self.api_key or not self.client:
+            logger.warning(
+                "OpenAI API key not set or client not initialized, cannot get city name"
+            )
             return None
 
         try:
@@ -128,7 +147,7 @@ class OpenAIConnector:
             Only respond with the city name and nothing else.
             """
 
-            response = openai.ChatCompletion.create(
+            response = self.client.chat.completions.create(
                 model="gpt-3.5-turbo",
                 messages=[
                     {
@@ -164,8 +183,10 @@ class OpenAIConnector:
         Returns:
             Translated text
         """
-        if not self.api_key:
-            logger.warning("OpenAI API key not set, cannot translate text")
+        if not self.api_key or not self.client:
+            logger.warning(
+                "OpenAI API key not set or client not initialized, cannot translate text"
+            )
             return text
 
         try:
@@ -179,7 +200,7 @@ class OpenAIConnector:
             Provide only the translated text without explanations.
             """
 
-            response = openai.ChatCompletion.create(
+            response = self.client.chat.completions.create(
                 model="gpt-3.5-turbo",
                 messages=[
                     {"role": "system", "content": "You are a precise translator."},
@@ -201,6 +222,32 @@ if __name__ == "__main__":
     # Test the OpenAI connector
     connector = OpenAIConnector()
 
+    if connector.api_key:
+        print(f"API key found: {connector.api_key[:4]}{'*' * 20}")
+    else:
+        print(
+            "No API key found. This is expected if you're using the app.py integration."
+        )
+        print(
+            "When running directly, you can set the OPENAI_API_KEY environment variable for testing."
+        )
+
+        # For direct testing only - if you want to test without environment variables
+        should_test = input(
+            "Would you like to input an API key for testing? (yes/no): "
+        )
+        if should_test.lower() == "yes":
+            api_key = input("Enter your OpenAI API key: ")
+            if api_key:
+                connector = OpenAIConnector(api_key=api_key)
+                print("Connector initialized with provided API key.")
+            else:
+                print("No API key provided. Exiting test mode.")
+                exit(1)
+        else:
+            print("Exiting test mode.")
+            exit(1)
+
     # Test airport code lookup
     test_cities = [
         "Paris, France",
@@ -209,6 +256,15 @@ if __name__ == "__main__":
         "Sydney, Australia",
     ]
 
+    print("\nTesting airport code lookup:")
     for city in test_cities:
         code = connector.get_airport_code(city)
         print(f"Airport code for {city}: {code}")
+
+    # Test reverse lookup
+    if connector.api_key and connector.client:
+        print("\nTesting city name lookup:")
+        test_codes = ["CDG", "JFK", "NRT", "SYD"]
+        for code in test_codes:
+            city = connector.get_city_name_from_code(code)
+            print(f"City for code {code}: {city}")
