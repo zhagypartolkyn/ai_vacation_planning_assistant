@@ -1,0 +1,6 @@
+.vscode/
+.streamlit/
+api_keys/
+hotel_vectorstore/
+restaurant-chunks/
+venv/
